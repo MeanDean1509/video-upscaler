@@ -4,10 +4,7 @@ const webpack = require('webpack');
 
 
 const CopyWebpackPlugin = require('copy-webpack-plugin');
-const { CleanWebpackPlugin } = require('clean-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-
-const isDevServer = process.argv.some((arg) => arg.includes('webpack-dev-server'));
 
 
 module.exports = {
@@ -51,11 +48,6 @@ module.exports = {
             template: 'src/index.html'
         }),
 
-        ...(!isDevServer ? [
-            new CleanWebpackPlugin({
-                cleanStaleWebpackAssets: false
-            })
-        ] : []),
         new CopyWebpackPlugin( {
             patterns: [
                 { from: "src/*.js", to: path.basename('[name].js') },
