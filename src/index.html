@@ -78,8 +78,8 @@ I built it because from previous experience as a casual user who just wants to u
 </div>
 
 <div id="file-load-panel" class="w-[640px] mx-auto bg-gray-light rounded-3xl h-[360px] p-6 box-border border border-gray-border block"  x-show="$store.state === 'init'">
-    <p class="w-full text-2xl text-center my-5 mx-auto">Choose a video to upscale</p>
-    <button type="button" class="btn btn-primary mx-auto my-16 py-2 px-4 rounded-lg font-extrabold block bg-blue-900 flex flex-row"  id="input-button" onclick="chooseFile(this)">Choose a video file</button>
+    <p class="w-full text-2xl text-center my-5 mx-auto">Choose videos to upscale</p>
+    <button type="button" class="btn btn-primary mx-auto my-16 py-2 px-4 rounded-lg font-extrabold block bg-blue-900 flex flex-row"  id="input-button" onclick="chooseFile(this)">Choose video files</button>
 </div>
 
 
@@ -106,6 +106,7 @@ I built it because from previous experience as a casual user who just wants to u
 
    
         <p class="w-full mb-2 text-center  ">Upscaling <span x-text="$store.filename" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"></span>  to  <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"><span x-text="$store.width*2" ></span>x<span x-text="$store.height*2"></span></span>. Output: ~ <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1" x-text="$store.size"></span></p>
+        <p class="w-full mb-2 text-center" x-show="$store.batch_total > 1">Batch queue: <span x-text="$store.batch_total" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"></span> videos. The first video is shown for preview and settings.</p>
 
         <div id="settings" class="mt-3 mb-3 w-full h-fit rounded-2xl text-base bg-gray-light border border-gray-border p-4">
 
@@ -139,11 +140,11 @@ I built it because from previous experience as a casual user who just wants to u
         </div>
 
 
-        <button  type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"  onclick="initRecording()" x-show="$store.target === 'writer'">Choose output location &nbsp
+        <button  type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"  onclick="initRecording()" x-show="$store.target === 'writer' || $store.batch_total > 1">Choose output location &nbsp
             <img src="folder.svg" alt="Choose a location to save the file to"  width="10" height="10">
         </button>
 
-        <button  type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"  onclick="initRecording()"  x-show="$store.target === 'blob'">Start upscaling &nbsp
+        <button  type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"  onclick="initRecording()"  x-show="$store.target === 'blob' && !($store.batch_total > 1)">Start upscaling &nbsp
             <img src="play.svg" alt="Start upscaling your video"  width="10" height="10">
         </button>
     </div>
@@ -153,7 +154,8 @@ I built it because from previous experience as a casual user who just wants to u
 
 
     <div id="info"  class="" x-show="$store.state === 'processing' || $store.state === 'paused'">
-        <p class="text-center mx-auto my-2">Upscaling <span x-text="$store.filename" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-auto text-center"></span> .Estimated time left: <span x-text="$store.eta"></span></p>
+        <p class="text-center mx-auto my-2">Upscaling <span x-text="$store.filename" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-auto text-center"></span><span x-show="$store.batch_total > 1"> (<span x-text="$store.batch_current"></span>/<span x-text="$store.batch_total"></span>)</span>. Estimated time left: <span x-text="$store.eta"></span></p>
+        <p class="text-center mx-auto my-2" x-show="$store.batch_total > 1">Completed <span x-text="$store.batch_completed"></span> of <span x-text="$store.batch_total"></span> videos.</p>
 
         <p class="text-center mx-auto my-2 text-yellow-600 font-bold" x-show="$store.state === 'paused'">
             ⏸ Processing Paused
@@ -186,7 +188,13 @@ I built it because from previous experience as a casual user who just wants to u
 
 
 
-        <div class="mx-auto my-2" x-show="$store.target=='writer'">Saved result to <span x-text="$store.download_name" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"></span></div>
+        <div class="mx-auto my-2" x-show="$store.target=='writer' && !($store.batch_total > 1)">Saved result to <span x-text="$store.download_name" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"></span></div>
+        <div class="mx-auto my-2 text-center" x-show="$store.target=='writer' && $store.batch_total > 1">Saved <span x-text="$store.batch_completed"></span> upscaled videos to the selected folder.</div>
+        <div class="mx-auto my-2 text-center" x-show="$store.batch_total > 1">
+            <template x-for="name in $store.batch_results" :key="name">
+                <div><span x-text="name" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1"></span></div>
+            </template>
+        </div>
         
         
         <div class="flex flex-row">

@@ -45,17 +45,33 @@ async function init(config: InitData): Promise<void> {
     gpu = await WebSR.initWebGPU();
   }
 
+  if (config.upscaled) {
+    upscaled_canvas = config.upscaled;
+  }
+
+  if (config.original) {
+    original_canvas = config.original;
+  }
+
+  if (!upscaled_canvas || !original_canvas) {
+    postMessage({ cmd: 'error', data: 'Preview canvas was not initialized' } satisfies WorkerResponseMessage);
+    return;
+  }
+
+  upscaled_canvas.width = config.resolution.width * 2;
+  upscaled_canvas.height = config.resolution.height * 2;
+  original_canvas.width = config.resolution.width * 2;
+  original_canvas.height = config.resolution.height * 2;
+
   websr = new WebSR({
     network_name: "anime4k/cnn-2x-m",
     weights,
     resolution: config.resolution,
     gpu: gpu,
-    canvas: config.upscaled as any // OffscreenCanvas is valid but types may be strict
+    canvas: upscaled_canvas as any // OffscreenCanvas is valid but types may be strict
   });
 
   resolution = config.resolution;
-  upscaled_canvas = config.upscaled;
-  original_canvas = config.original;
 
   ctx = original_canvas.getContext('bitmaprenderer');
 

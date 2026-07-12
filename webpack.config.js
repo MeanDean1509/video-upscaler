@@ -7,6 +7,8 @@ const CopyWebpackPlugin = require('copy-webpack-plugin');
 const { CleanWebpackPlugin } = require('clean-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
+const isDevServer = process.argv.some((arg) => arg.includes('webpack-dev-server'));
+
 
 module.exports = {
     entry: [ "./src/index.ts", './src/worker.ts'],
@@ -49,9 +51,11 @@ module.exports = {
             template: 'src/index.html'
         }),
 
-        new CleanWebpackPlugin({
-            cleanStaleWebpackAssets: false
-        }),
+        ...(!isDevServer ? [
+            new CleanWebpackPlugin({
+                cleanStaleWebpackAssets: false
+            })
+        ] : []),
         new CopyWebpackPlugin( {
             patterns: [
                 { from: "src/*.js", to: path.basename('[name].js') },

@@ -19,8 +19,8 @@ export type WorkerRequestMessage =
 
 export interface InitData {
   bitmap: ImageBitmap;
-  upscaled: OffscreenCanvas;
-  original: OffscreenCanvas;
+  upscaled?: OffscreenCanvas;
+  original?: OffscreenCanvas;
   resolution: Resolution;
 }
 

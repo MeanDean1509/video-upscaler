@@ -28,8 +28,13 @@ let content: ContentType = 'rl';
 // Video data
 let download_name: string;
 let inputFileHandle: FileSystemFileHandle;
+let inputFileHandles: FileSystemFileHandle[] = [];
 let gpu: any;
 let websr: WebSR;
+let canvasesTransferred = false;
+let imageCompareMounted = false;
+let currentProcessResolve: ((data: Blob | null) => void) | null = null;
+let currentProcessReject: ((message: string) => void) | null = null;
 
 // AI model weights for different network sizes and content types
 type WeightsMap = {
@@ -79,6 +84,7 @@ declare global {
         switchNetworkStyle: (el: HTMLInputElement) => Promise<void>;
         showSaveFilePicker: (options?: any) => Promise<FileSystemFileHandle>;
         showOpenFilePicker: (options?: any) => Promise<FileSystemFileHandle[]>;
+        showDirectoryPicker?: (options?: any) => Promise<FileSystemDirectoryHandle>;
         togglePause: () => void;
     }
 }
@@ -121,15 +127,20 @@ function showUnsupported(text: string): void {
  */
 async function chooseFile(e?: Event): Promise<void> {
     try {
-        const [fileHandle] = await window.showOpenFilePicker({
+        const fileHandles = await window.showOpenFilePicker({
             types: [{
                 description: 'Video Files',
                 accept: { 'video/mp4': ['.mp4'] }
             }],
-            multiple: false
+            multiple: true
         });
 
-        await loadVideo(fileHandle);
+        inputFileHandles = fileHandles;
+        Alpine.store('batch_total', fileHandles.length);
+        Alpine.store('batch_completed', 0);
+        Alpine.store('batch_results', []);
+
+        await loadVideo(fileHandles[0]);
     } catch (e) {
         // User cancelled file picker
         console.log('File selection cancelled');
@@ -141,7 +152,7 @@ async function chooseFile(e?: Event): Promise<void> {
 /**
  * Load video file from FileSystemFileHandle
  */
-async function loadVideo(fileHandle: FileSystemFileHandle): Promise<void> {
+async function loadVideo(fileHandle: FileSystemFileHandle, stateAfterPreview: string = 'preview'): Promise<void> {
     Alpine.store('state', 'loading');
 
     // Store the file handle for later processing
@@ -151,19 +162,19 @@ async function loadVideo(fileHandle: FileSystemFileHandle): Promise<void> {
     const file = await fileHandle.getFile();
 
     // Set up download name
-    download_name = file.name.split(".")[0] + "-upscaled.mp4";
+    download_name = getOutputName(file.name);
     Alpine.store('download_name', download_name);
     Alpine.store('filename', file.name);
 
     // Read file for preview setup
     const arrayBuffer = await file.arrayBuffer();
-    await setupPreview(arrayBuffer);
+    await setupPreview(arrayBuffer, stateAfterPreview);
 }
 
 /**
  * Set up the preview UI with before/after comparison
  */
-async function setupPreview(data: ArrayBuffer): Promise<void> {
+async function setupPreview(data: ArrayBuffer, stateAfterPreview: string = 'preview'): Promise<void> {
     video = document.createElement('video');
 
     const fileBlob = new Blob([data], { type: "video/mp4" });
@@ -172,7 +183,11 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
 
     const imageCompare = document.getElementById('image-compare-outer') as HTMLElement;
 
+    return new Promise((resolve, reject) => {
 
+    video.onerror = function () {
+        reject(new Error('The selected video could not be loaded'));
+    };
 
     video.onloadeddata = async function (){
 
@@ -180,10 +195,12 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
 
         Alpine.store('width', video.videoWidth);
         Alpine.store('height', video.videoHeight);
-        upscaled_canvas.width = video.videoWidth*2;
-        upscaled_canvas.height = video.videoHeight*2;
-        original_canvas.width = video.videoWidth*2;
-        original_canvas.height = video.videoHeight*2;
+        if (!canvasesTransferred) {
+            upscaled_canvas.width = video.videoWidth*2;
+            upscaled_canvas.height = video.videoHeight*2;
+            original_canvas.width = video.videoWidth*2;
+            original_canvas.height = video.videoHeight*2;
+        }
 
 
         imageCompare.style.height = '318px';
@@ -192,10 +209,21 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
         imageCompare.style.position = 'relative';
 
 
-        new ImageCompare(document.getElementById('image-compare')).mount();
+        if (!imageCompareMounted) {
+            new ImageCompare(document.getElementById('image-compare')).mount();
+            imageCompareMounted = true;
+        }
+        const showPreviewAndHandleErrors = async function () {
+            try {
+                await showPreview();
+            } catch (e) {
+                reject(e);
+            }
+        };
+
         video.currentTime = video.duration * 0.2 || 0;
-        if(video.requestVideoFrameCallback)  video.requestVideoFrameCallback(showPreview);
-        else requestAnimationFrame(showPreview);
+        if(video.requestVideoFrameCallback)  video.requestVideoFrameCallback(showPreviewAndHandleErrors);
+        else requestAnimationFrame(showPreviewAndHandleErrors);
 
         window.togglePause = function () {
             const currentState = Alpine.store('state');
@@ -222,20 +250,26 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
         const bitmap = await createImageBitmap(video);
 
 
-        const upscaled = upscaled_canvas.transferControlToOffscreen();
-        const original =    original_canvas.transferControlToOffscreen();
+        const transferables: Transferable[] = [bitmap];
+        const initData: any = {
+            bitmap,
+            resolution: {
+                width: video.videoWidth,
+                height: video.videoHeight
+            }
+        };
 
+        if (!canvasesTransferred) {
+            const upscaled = upscaled_canvas.transferControlToOffscreen();
+            const original = original_canvas.transferControlToOffscreen();
 
-        worker.postMessage({cmd: "init", data: {
-                bitmap,
-                upscaled,
-                original,
-                resolution: {
-                    width: video.videoWidth,
-                    height: video.videoHeight
-                }
+            initData.upscaled = upscaled;
+            initData.original = original;
+            transferables.push(upscaled, original);
+            canvasesTransferred = true;
+        }
 
-            }}, [bitmap, upscaled, original]);
+        worker.postMessage({cmd: "init", data: initData}, transferables);
 
 
         // Default to 'rl' (real life) network
@@ -368,7 +402,7 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
         }
 
 
-        Alpine.store('state', 'preview');
+        Alpine.store('state', stateAfterPreview);
 
 
 
@@ -389,10 +423,10 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
             }
         }
 
-
-
+        resolve();
     }
 
+    });
 }
 
 
@@ -415,12 +449,28 @@ worker.onmessage = function (event: MessageEvent<WorkerResponseMessage>) {
         // Processing started
 
     } else if (event.data.cmd === 'error') {
+        if (currentProcessReject) {
+            const reject = currentProcessReject;
+            currentProcessResolve = null;
+            currentProcessReject = null;
+            reject(event.data.data);
+            return;
+        }
+
         showError(event.data.data);
 
     } else if (event.data.cmd === 'eta') {
         Alpine.store('eta', event.data.data);
 
     } else if (event.data.cmd === 'finished') {
+        if (currentProcessResolve) {
+            const resolve = currentProcessResolve;
+            currentProcessResolve = null;
+            currentProcessReject = null;
+            resolve(event.data.data);
+            return;
+        }
+
         Alpine.store('state', 'complete');
         Alpine.store('download_url', event.data.data ? window.URL.createObjectURL(event.data.data) : null);
     }
@@ -455,6 +505,11 @@ async function updateNetwork(): Promise<void> {
  * Start the video upscaling process
  */
 async function initRecording(): Promise<void> {
+    if (inputFileHandles.length > 1) {
+        await initBatchRecording();
+        return;
+    }
+
     Alpine.store('state', 'loading');
 
     let bitrate = getBitrate();
@@ -477,6 +532,119 @@ async function initRecording(): Promise<void> {
         inputHandle: inputFileHandle,
         outputHandle
     } satisfies WorkerRequestMessage);
+}
+
+/**
+ * Process all selected videos one after another and save them into a folder.
+ */
+async function initBatchRecording(): Promise<void> {
+    if (!window.showDirectoryPicker) {
+        return showUnsupported("Directory Picker API");
+    }
+
+    let outputDirectory: FileSystemDirectoryHandle;
+
+    try {
+        outputDirectory = await window.showDirectoryPicker({
+            mode: 'readwrite',
+            startIn: 'downloads'
+        });
+    } catch (e) {
+        console.warn("User aborted output folder request");
+        return Alpine.store('state', 'preview');
+    }
+
+    Alpine.store('batch_total', inputFileHandles.length);
+    Alpine.store('batch_completed', 0);
+    Alpine.store('batch_results', []);
+    Alpine.store('target', 'writer');
+    Alpine.store('state', 'loading');
+
+    try {
+        const usedOutputNames = new Set<string>();
+
+        for (let i = 0; i < inputFileHandles.length; i++) {
+            const handle = inputFileHandles[i];
+            const file = await handle.getFile();
+            const outputName = getUniqueOutputName(file.name, usedOutputNames);
+            const outputHandle = await outputDirectory.getFileHandle(outputName, { create: true });
+
+            Alpine.store('batch_current', i + 1);
+            Alpine.store('batch_completed', i);
+            Alpine.store('progress', 0);
+            Alpine.store('eta', 'calculating...');
+
+            await loadVideo(handle, 'processing');
+            await runWorkerProcess(handle, outputHandle);
+
+            const results = Alpine.store('batch_results') || [];
+            Alpine.store('batch_results', [...results, outputName]);
+            Alpine.store('batch_completed', i + 1);
+        }
+
+        Alpine.store('download_name', `${inputFileHandles.length} upscaled videos`);
+        Alpine.store('state', 'complete');
+    } catch (e) {
+        showError(e instanceof Error ? e.message : String(e));
+    } finally {
+        currentProcessResolve = null;
+        currentProcessReject = null;
+    }
+}
+
+/**
+ * Run one worker process and resolve when the worker reports completion.
+ */
+function runWorkerProcess(inputHandle: FileSystemFileHandle, outputHandle?: FileSystemFileHandle): Promise<Blob | null> {
+    return new Promise((resolve, reject) => {
+        currentProcessResolve = resolve;
+        currentProcessReject = reject;
+
+        worker.postMessage({
+            cmd: "process",
+            inputHandle,
+            outputHandle
+        } satisfies WorkerRequestMessage);
+    });
+}
+
+/**
+ * Build the default output filename for a source file.
+ */
+function getOutputName(filename: string): string {
+    const dotIndex = filename.lastIndexOf(".");
+
+    if (dotIndex === -1) {
+        return `${filename}-upscaled.mp4`;
+    }
+
+    return `${filename.slice(0, dotIndex)}-upscaled.mp4`;
+}
+
+/**
+ * Build a unique output filename within one batch.
+ */
+function getUniqueOutputName(filename: string, usedOutputNames: Set<string>): string {
+    const outputName = getOutputName(filename);
+
+    if (!usedOutputNames.has(outputName)) {
+        usedOutputNames.add(outputName);
+        return outputName;
+    }
+
+    const dotIndex = outputName.lastIndexOf(".");
+    const name = dotIndex === -1 ? outputName : outputName.slice(0, dotIndex);
+    const extension = dotIndex === -1 ? "" : outputName.slice(dotIndex);
+    let counter = 2;
+    let uniqueName = `${name}-${counter}${extension}`;
+
+    while (usedOutputNames.has(uniqueName)) {
+        counter++;
+        uniqueName = `${name}-${counter}${extension}`;
+    }
+
+    usedOutputNames.add(uniqueName);
+    return uniqueName;
 }
 
 /**
@@ -533,15 +701,6 @@ async function showFilePicker(): Promise<FileSystemFileHandle> {
 
     return handle;
 }
-
-
-
-
-
-
-
-
-
 
 
 
